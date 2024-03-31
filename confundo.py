@@ -77,6 +77,6 @@ class Socket:
         # Connection termination logic remains unchanged
         pass
 
-    # Additional methods (__enter__, __exit__, etc.) remain unchanged
+
 
 
