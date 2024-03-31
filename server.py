@@ -1,9 +1,17 @@
 import socket
 import random
 import struct
-import confundo
+import time
 
+# Constants
 MAX_PACKET_SIZE = 424
+INITIAL_CWND = 412
+INITIAL_SS_THRESH = 12000
+
+# Flags for Confundo protocol
+SYN = 0b001
+ACK = 0b010
+FIN = 0b100
 
 def start():
     # Create a socket
@@ -26,11 +34,11 @@ def start():
             print('Received packet:', seq_num, ack_num, conn_id, flags)
 
             # Handle different types of packets
-            if flags & confundo.SYN:  # SYN packet
+            if flags & SYN:  # SYN packet
                 handle_syn(server_socket, client_address, seq_num, conn_id)
-            elif flags & confundo.FIN:  # FIN packet
+            elif flags & FIN:  # FIN packet
                 handle_fin(server_socket, client_address, seq_num, conn_id)
-            elif flags & confundo.ACK:  # ACK packet
+            elif flags & ACK:  # ACK packet
                 handle_ack(server_socket, client_address, ack_num, conn_id)
             elif payload:  # Data packet
                 handle_data(server_socket, client_address, seq_num, ack_num, conn_id, payload)
@@ -54,7 +62,7 @@ def handle_syn(server_socket, client_address, seq_num, conn_id):
 
     # Send a SYN-ACK packet back to the client
     ack_num = seq_num + 1  # Expected sequence number from the client
-    flags = confundo.SYN | confundo.ACK
+    flags = SYN | ACK
     send_packet(server_socket, client_address, seq_num, ack_num, conn_id, flags)
 
     # Wait for an ACK packet from the client to confirm connection establishment
@@ -66,7 +74,7 @@ def handle_ack(server_socket, client_address, ack_num, conn_id):
 def handle_fin(server_socket, client_address, seq_num, conn_id):
     # Send an ACK packet back to the client
     ack_num = seq_num + 1
-    flags = confundo.ACK
+    flags = ACK
     send_packet(server_socket, client_address, seq_num, ack_num, conn_id, flags)
 
     # Close the connection gracefully
@@ -78,7 +86,7 @@ def handle_data(server_socket, client_address, seq_num, ack_num, conn_id, payloa
     print("Received data:", payload.decode())
 
     # Send an ACK packet back to the client
-    flags = confundo.ACK
+    flags = ACK
     send_packet(server_socket, client_address, seq_num, ack_num, conn_id, flags)
 
 def generate_connection_id():
@@ -86,4 +94,5 @@ def generate_connection_id():
 
 if __name__ == '__main__':
     start()
+
 
