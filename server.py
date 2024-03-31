@@ -15,9 +15,9 @@ def main(host, port):
                 # Process or save data as needed
                 break  # This example stops after receiving some data for simplicity
 
-            print("Closing server socket...")
-            sock.close()
-            print("Server socket closed.")
+        print("Closing server socket...")
+        sock.close()
+        print("Server socket closed.")
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Confundo Protocol Server")
