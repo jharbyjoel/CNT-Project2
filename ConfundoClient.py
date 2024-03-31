@@ -4,7 +4,7 @@ import sys
 import os
 import time
 
-# Constants
+# Constants Variables
 HEADER_FORMAT = "!IIHB"
 HEADER_SIZE = 12
 MTU = 424
