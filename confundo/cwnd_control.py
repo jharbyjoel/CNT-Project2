@@ -1,27 +1,24 @@
-# -*- Mode: python; py-indent-offset: 4; indent-tabs-mode: nil; coding: utf-8; -*-
-# Copyright 2019 Alex Afanasyev
-#
-
 from .common import *
 
 class CwndControl:
-    '''Interface for the congestio control actions'''
+    '''Interface for the congestion control actions'''
 
     def __init__(self):
         self.cwnd = 1.0 * MTU
         self.ssthresh = INIT_SSTHRESH
 
     def on_ack(self, ackedDataLen):
-        #
-        # IMPLEMENT this and call this method in approprite place inside confundo/socket.py
-        #
-        pass
+        # Congestion control logic for handling acknowledgments
+        if self.cwnd < self.ssthresh:
+            self.cwnd += ackedDataLen
+        else:
+            self.cwnd += (MTU * MTU) / self.cwnd
 
     def on_timeout(self):
-        #
-        # IMPLEMENT this and call this method in approprite place inside confundo/socket.py
-        #
-        pass
+        # Congestion control logic for handling timeouts
+        self.ssthresh = self.cwnd / 2
+        self.cwnd = MTU
 
     def __str__(self):
-        return f"cwnd:{self.cwnd} ssthreash:{self.ssthresh}"
+        return f"cwnd:{self.cwnd} ssthresh:{self.ssthresh}"
+
