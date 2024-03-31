@@ -1,65 +1,39 @@
 import argparse
+import os
+import socket
 import sys
-from confundo import Socket
+import time
 
-def main(host, port, file_path):
+import confundo
+
+parser = argparse.ArgumentParser("Parser")
+parser.add_argument("host", help="Set Hostname")
+parser.add_argument("port", help="Set Port Number", type=int)
+parser.add_argument("file", help="Set File Directory")
+args = parser.parse_args()
+
+def start():
     try:
-        with Socket() as sock:
+        with confundo.Socket() as sock:
             sock.settimeout(10)
-            print("Connecting to server...")
-            sock.connect((host, port))
-            
-            print("Connection established. Sending file...")
-            with open(file_path, "rb") as file:
-                data = file.read()
-                sock.send(data)
-                print("File sent successfully.")
-            
-            print("Closing connection...")
-            sock.close()
-            print("Connection closed.")
-    except Exception as e:
-        print(f"An error occurred: {e}", file=sys.stderr)
+            sock.connect((args.host, int(args.port)))
 
-if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Confundo Protocol Client")
-    parser.add_argument("host", help="Hostname or IP address of the server")
-    parser.add_argument("port", type=int, help="Port number of the server")
-    parser.add_argument("file", help="Path to the file to send")
-    args = parser.parse_args()
+            with open(args.file, "rb") as f:
+                data = f.read(50000)
+                while data:
+                    total_sent = 0
+                    while total_sent < len(data):
+                        sent = sock.send(data[total_sent:])
+                        total_sent += sent
+                    data = f.read(50000)
 
-    main(args.host, args.port, args.file)
+            # Send FIN packet after file transmission
+            sock.send(b'', flags=confundo.FIN)
+            time.sleep(2)  # Wait for 2 seconds for incoming FIN
+    except RuntimeError as e:
+        sys.stderr.write(f"ERROR: {e}\n")
+        sys.exit(1)
 
-@import argparse
-import sys
-from confundo import Socket
-
-def main(host, port, file_path):
-    try:
-        with Socket() as sock:
-            sock.settimeout(10)
-            print("Connecting to server...")
-            sock.connect((host, port))
-            
-            print("Connection established. Sending file...")
-            with open(file_path, "rb") as file:
-                data = file.read()
-                sock.send(data)
-                print("File sent successfully.")
-            
-            print("Closing connection...")
-            sock.close()
-            print("Connection closed.")
-    except Exception as e:
-        print(f"An error occurred: {e}", file=sys.stderr)
-
-if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Confundo Protocol Client")
-    parser.add_argument("host", help="Hostname or IP address of the server")
-    parser.add_argument("port", type=int, help="Port number of the server")
-    parser.add_argument("file", help="Path to the file to send")
-    args = parser.parse_args()
-
-    main(args.host, args.port, args.file)
-
+if __name__ == '__main__':
+    start()
 
