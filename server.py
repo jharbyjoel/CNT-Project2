@@ -1,20 +1,28 @@
-import sys
 import argparse
-import socket
-import signal
+from confundo import Socket
 
-import confundo
+def main(host, port):
+    with Socket() as sock:
+        sock.settimeout(None)  # Optionally set to None for servers intended to run indefinitely
+        sock.bind((host, port))
+        print(f"Server listening on {host}:{port}")
 
-# for testing, replace socket.socket with confundo.Socket()
-# or just use the reference server (check Piazza or consult the instructor)
+        while True:
+            print("Waiting for connections...")
+            data, addr = sock.recv(1024)
+            if data:
+                print(f"Received data from {addr}")
+                # Process or save data as needed
+                break  # This example stops after receiving some data for simplicity
 
-# the server can only work in a single threaded mode, one client at a time (no parallel,
-# neither concurrent nor threaded---simplifications in the socket implementation)
+            print("Closing server socket...")
+            sock.close()
+            print("Server socket closed.")
 
-# Other than that, standard socket interface should work
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="Confundo Protocol Server")
+    parser.add_argument("--host", default="0.0.0.0", help="Host to bind the server to")
+    parser.add_argument("--port", type=int, default=54000, help="Port number to bind the server to")
+    args = parser.parse_args()
 
-def start():
-    pass
-
-if __name__ == '__main__':
-    start()
+    main(args.host, args.port)
