@@ -1,60 +1,111 @@
-import argparse
-import os
-import socket
 import sys
+import socket
+import struct
+import os
 import time
 
-import confundo
+# Constants
+MAX_PACKET_SIZE = 424
+MTU_SIZE = 412
+INITIAL_CWND = 412
+INITIAL_SS_THRESH = 12000
+INITIAL_SEQ_NUM = 50000
+TIMEOUT_INTERVAL = 0.5
+FIN_WAIT_TIME = 2
+MAX_SEQ_NUM = 50000
 
-parser = argparse.ArgumentParser("Client")
-parser.add_argument("host", help="Hostname or IP address of the server")
-parser.add_argument("port", help="Port number of the server", type=int)
-parser.add_argument("file", help="Name of the file to transfer")
-args = parser.parse_args()
+class ConfundoClient:
+    def __init__(self, hostname, port, filename):
+        self.hostname = hostname
+        self.port = port
+        self.filename = filename
+        self.seq_num = INITIAL_SEQ_NUM
+        self.conn_id = 0  # Will be updated during handshake
+        self.cwnd = INITIAL_CWND
+        self.ss_thresh = INITIAL_SS_THRESH
+        self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        self.sock.settimeout(TIMEOUT_INTERVAL)
+        self.last_ack_time = time.time()
 
-def start():
-    try:
-        with confundo.Socket() as sock:
-            sock.settimeout(10)
-            sock.connect((args.host, args.port))
+    def send_packet(self, seq_num, ack_num, conn_id, flags, data=b''):
+        header = struct.pack('!IIHHH', seq_num, ack_num, conn_id, 0, flags)
+        packet = header + data
+        self.sock.sendto(packet, (self.hostname, self.port))
 
-            # Perform three-way handshake
-            sock.send_syn()
-            syn_ack = sock.receive()
-            if syn_ack.is_syn_ack():
-                sock.send_ack(syn_ack)
+    def receive_packet(self):
+        packet, _ = self.sock.recvfrom(MAX_PACKET_SIZE)
+        header = packet[:12]
+        data = packet[12:]
+        seq_num, ack_num, conn_id, _, flags = struct.unpack('!IIHHH', header)
+        return seq_num, ack_num, conn_id, flags, data
 
-                # Read file and send in segments
-                with open(args.file, "rb") as f:
-                    while True:
-                        data = f.read(confundo.MAX_SEGMENT_SIZE)
-                        if not data:
+    def three_way_handshake(self):
+        self.send_packet(self.seq_num, 0, 0, 0b010)  # SYN packet
+        seq_num, ack_num, conn_id, flags, _ = self.receive_packet()
+        if flags & 0b011 != 0b011:
+            print("Error: Invalid SYN-ACK packet received")
+            sys.exit(1)
+        self.conn_id = conn_id
+        self.seq_num += 1  # Increment sequence number for next packet
+        self.send_packet(self.seq_num, seq_num + 1, conn_id, 0b001)  # ACK packet
+
+    def transfer_file(self):
+        with open(self.filename, "rb") as file:
+            while True:
+                data = file.read(MTU_SIZE)
+                if not data:
+                    break
+                self.send_packet(self.seq_num, 0, self.conn_id, 0b001, data)
+                self.seq_num += len(data)
+                while True:
+                    try:
+                        seq_num, ack_num, conn_id, flags, _ = self.receive_packet()
+                        if conn_id != self.conn_id:
+                            print("Error: Invalid connection ID")
+                            sys.exit(1)
+                        if ack_num == self.seq_num:
                             break
-                        sock.send_data(data)
+                    except socket.timeout:
+                        print("Timeout: Resending last packet")
+                        self.send_packet(self.seq_num, 0, self.conn_id, 0b001, data)
+                self.cwnd += len(data)
+                if self.cwnd >= self.ss_thresh:
+                    self.cwnd += (412 * 412) // self.cwnd
 
-                # Send FIN packet after file transmission
-                sock.send_fin()
-                fin_ack = sock.receive()
-                if fin_ack.is_ack():
-                    # Wait for 2 seconds for incoming FIN packets
-                    start_time = time.time()
-                    while time.time() - start_time < 2:
-                        packet = sock.receive()
-                        if packet.is_fin():
-                            sock.send_ack(packet)
-                    sys.exit(0)  # Gracefully terminate after receiving FIN packet
-                else:
-                    sys.stderr.write("ERROR: Did not receive expected ACK for FIN\n")
-                    sys.exit(1)
-            else:
-                sys.stderr.write("ERROR: Did not receive expected SYN-ACK\n")
-                sys.exit(1)
+    def close_connection(self):
+        self.send_packet(self.seq_num, 0, self.conn_id, 0b100)  # FIN packet
+        self.seq_num += 1
+        start_time = time.time()
+        while time.time() - start_time < FIN_WAIT_TIME:
+            try:
+                seq_num, ack_num, conn_id, flags, _ = self.receive_packet()
+                if flags & 0b001 == 0b001:  # ACK packet
+                    break
+                elif flags & 0b100 == 0b100:  # FIN packet
+                    self.send_packet(self.seq_num, ack_num + 1, self.conn_id, 0b001)  # ACK packet
+            except socket.timeout:
+                pass
+        self.sock.close()
 
-    except RuntimeError as e:
-        sys.stderr.write(f"ERROR: {e}\n")
+    def run(self):
+        try:
+            self.three_way_handshake()
+            self.transfer_file()
+            self.close_connection()
+        except Exception as e:
+            print("Error:", str(e))
+            sys.exit(1)
+
+if __name__ == "__main__":
+    if len(sys.argv) != 4:
+        sys.stderr.write("ERROR: Invalid number of arguments\n")
         sys.exit(1)
 
-if __name__ == '__main__':
-    start()
+    hostname = sys.argv[1]
+    port = int(sys.argv[2])
+    filename = sys.argv[3]
+
+    client = ConfundoClient(hostname, port, filename)
+    client.run()
 
 
