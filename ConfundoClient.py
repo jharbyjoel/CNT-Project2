@@ -32,7 +32,7 @@ def unpack_header(data):
     flags = conn_id_flags & 0b111
     return seq_num, ack_num, conn_id, flags
 
-class ConfundoClient:
+class Socket:
     def __init__(self, server_ip, server_port, filename):
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self.server_address = (server_ip, server_port)
