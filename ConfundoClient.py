@@ -80,45 +80,52 @@ class ConfundoClient:
         except socket.timeout:
             print("ERROR: Timeout waiting for ACK", file=sys.stderr)
         return False
-    
     def establish_connection(self):
+        # Correctly initiates the three-way handshake by sending a SYN packet
         self.send_packet(SYN)
-        if not self.recv_ack():  # Expect SYN|ACK
-            print("ERROR: Failed to establish connection", file=sys.stderr)
+        try:
+            while True:  # Waiting for SYN|ACK
+                data, _ = self.sock.recvfrom(MTU)
+                seq_num, ack_num, conn_id, flags = unpack_header(data)
+                if flags & SYN and flags & ACK:  # SYN|ACK received
+                    self.conn_id = conn_id
+                    self.ack_num = seq_num + 1
+                    self.send_packet(ACK)  # Completing handshake
+                    break
+        except socket.timeout:
+            print("ERROR: Connection timeout during handshake", file=sys.stderr)
             sys.exit(1)
-        self.send_packet(ACK)  # Complete the three-way handshake
 
     def transfer_file(self):
-        try:
-            with open(self.filename, 'rb') as file:
-                while True:
-                    chunk = file.read(self.cwnd)
-                    if not chunk:
-                        break
-                    if not self.send_packet_with_retransmission(ACK, chunk):
-                        print("ERROR: Failed to transfer file", file=sys.stderr)
-                        return
-                    # Congestion control logic here
-        except FileNotFoundError:
-            print("ERROR: File not found", file=sys.stderr)
-            sys.exit(1)
+        with open(self.filename, 'rb') as f:
+            chunk = f.read(PAYLOAD_SIZE)
+            while chunk:
+                if not self.send_packet_with_retransmission(ACK, chunk):
+                    print("ERROR: File transmission failed", file=sys.stderr)
+                    return  # Exit on failure to retransmit
+                chunk = f.read(PAYLOAD_SIZE)
+        # After file is fully sent, send FIN packet
+        self.send_packet(FIN)
 
     def terminate_connection(self):
-        self.send_packet(FIN)
-        if not self.recv_ack():
-            print("ERROR: Failed to terminate connection properly", file=sys.stderr)
-        time.sleep(FIN_WAIT_TIME)  # Wait for possible FIN from the server
-    
+        # Waits for 2 seconds for any incoming FIN packets, responding with ACK
+        self.sock.settimeout(FIN_WAIT_TIME)
+        end_time = time.time() + FIN_WAIT_TIME
+        while time.time() < end_time:
+            try:
+                data, _ = self.sock.recvfrom(MTU)
+                _, _, conn_id, flags = unpack_header(data)
+                if flags & FIN and conn_id == self.conn_id:  # Respond to FIN
+                    self.send_packet(ACK)
+                    break  # Exit after responding to the first FIN
+            except socket.timeout:
+                break  # No more FIN packets received within the wait period
+        self.sock.close()  # Closing the socket after the FIN-WAIT period
+
     def run(self):
-        try:
-            self.establish_connection()
-            self.transfer_file()
-            self.terminate_connection()
-        except Exception as e:
-            print(f"ERROR: {e}", file=sys.stderr)
-        finally:
-            self.sock.close()
-            sys.exit(0)
+        self.establish_connection()
+        self.transfer_file()
+        self.terminate_connection()
 
 if __name__ == "__main__":
     if len(sys.argv) != 4:
@@ -126,3 +133,5 @@ if __name__ == "__main__":
         sys.exit(1)
     client = ConfundoClient(sys.argv[1], int(sys.argv[2]), sys.argv[3])
     client.run()
+
+    
