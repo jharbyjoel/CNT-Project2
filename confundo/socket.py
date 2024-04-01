@@ -1,6 +1,6 @@
+import sys
 from enum import Enum
 import socket
-import sys
 import time
 
 from .common import *
@@ -18,9 +18,6 @@ class State(Enum):
     CLOSED = 20
     ERROR = 21
 
-# class TimeoutError:
-#     pass
-
 class Socket:
     '''Incomplete socket abstraction for Confundo protocol'''
 
@@ -35,7 +32,7 @@ class Socket:
 
         self.inSeq = inSeq
 
-        self.lastAckTime = time.time() # last time ACK was sent / activity timer
+        self.lastAckTime = time.time()
         self.cc = CwndControl()
         self.outBuffer = b""
         self.inBuffer = b""
@@ -48,9 +45,9 @@ class Socket:
         self.remote = None
         self.noClose = noClose
 
-        self.cwnd = 1  # Initial congestion window size
-        self.ssthresh = 64  # Initial slow start threshold
-        self.dupAckThreshold = 3  # Threshold for triggering fast retransmit on duplicate ACKs
+        self.cwnd = 1
+        self.ssthresh = 64
+        self.dupAckThreshold = 3
 
     def __enter__(self):
         return self
@@ -89,16 +86,13 @@ class Socket:
 
         hadNewConnId = True
         while True:
-            # just wait forever until a new connection arrives
-
             if hadNewConnId:
-                self.connId += 1 # use it for counting incoming connections, no other uses really
+                self.connId += 1
                 hadNewConnId = False
             pkt = self._recv()
             if pkt and pkt.isSyn:
                 hadNewConnId = True
                 clientSock = Socket(connId=self.connId, synReceived=True, sock=self.sock, inSeq=None, noClose=True)
-                # at this point, syn was received, ack for syn was sent, now need to send our SYN and wait for ACK
                 clientSock._connect(self.lastFromAddr)
                 return clientSock
 
@@ -112,7 +106,7 @@ class Socket:
             self.sock.sendto(packet.encode(), self.remote)
         else:
             self.sock.sendto(packet.encode(), self.lastFromAddr)
-        print(format_line("SEND", packet, -1, -1))
+        print(format_line("SEND", packet, self.cwnd, self.ssthresh))
 
     def _recv(self):
         '''"Private" method to receive incoming packets'''
@@ -123,7 +117,7 @@ class Socket:
             return None
 
         inPkt = Packet().decode(inPacket)
-        print(format_line("RECV", inPkt, -1, -1))
+        print(format_line("RECV", inPkt, self.cwnd, self.ssthresh))
 
         outPkt = None
         if inPkt.isSyn:
@@ -134,10 +128,9 @@ class Socket:
             outPkt = Packet(seqNum=self.seqNum, ackNum=self.inSeq, connId=self.connId, isAck=True)
 
         elif inPkt.isFin:
-            if self.inSeq == inPkt.seqNum: # all previous packets has been received, so safe to advance
+            if self.inSeq == inPkt.seqNum:
                 self.finReceived = True
             else:
-                # don't advance, which means we will send a duplicate ACK
                 pass
 
             outPkt = Packet(seqNum=self.seqNum, ackNum=self.inSeq, connId=self.connId, isAck=True)
@@ -149,10 +142,9 @@ class Socket:
             if self.finReceived:
                 raise RuntimeError("Received data after getting FIN (incoming connection closed)")
 
-            if self.inSeq == inPkt.seqNum: # all previous packets has been received, so safe to advance
+            if self.inSeq == inPkt.seqNum:
                 self.inBuffer += inPkt.payload
             else:
-                # don't advance, which means we will send a duplicate ACK
                 pass
 
             outPkt = Packet(seqNum=self.seqNum, ackNum=self.inSeq, connId=self.connId, isAck=True)
@@ -185,7 +177,7 @@ class Socket:
     def sendSynPacket(self):
         synPkt = Packet(seqNum=self.seqNum, connId=self.connId, isSyn=True)
         self._send(synPkt)
-        self.seqNum +=1
+        self.seqNum += 1
 
     def expectSynAck(self):
         startTime = time.time()
