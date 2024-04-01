@@ -1,8 +1,8 @@
 import sys
 import socket
 import struct
+import time
 
-from confundo.util import parse_packet, create_packet
 from confundo.cwnd_control import CwndControl
 
 # Constants
@@ -27,10 +27,13 @@ class ConfundoServer:
         self.sock.settimeout(TIMEOUT_INTERVAL)
         self.cc = CwndControl()
 
-    def send_packet(self, seq_num, ack_num, conn_id, flags, data=b''):
+    def send_packet(self, seq_num, ack_num, conn_id, flags, data=b'', client_address=None):
         header = struct.pack('!IIHHH', seq_num, ack_num, conn_id, 0, flags)
         packet = header + data
-        self.sock.sendto(packet, client_address)
+        if client_address:
+            self.sock.sendto(packet, client_address)
+        else:
+            self.sock.sendto(packet, ('localhost', self.port))
 
     def receive_packet(self):
         packet, client_address = self.sock.recvfrom(MAX_PACKET_SIZE)
@@ -46,7 +49,7 @@ class ConfundoServer:
             sys.exit(1)
         self.conn_id = conn_id
         self.seq_num += 1  # Increment sequence number for next packet
-        self.send_packet(self.seq_num, seq_num + 1, conn_id, 0b011)  # SYN-ACK packet
+        self.send_packet(self.seq_num, seq_num + 1, conn_id, 0b011, client_address=client_address)  # SYN-ACK packet
         seq_num, ack_num, conn_id, flags, _, _ = self.receive_packet()
         if flags & 0b001 != 0b001:
             print("Error: Invalid ACK packet received")
@@ -63,7 +66,7 @@ class ConfundoServer:
                     sys.exit(1)
                 file.write(data)
                 self.seq_num += len(data)
-                self.send_packet(self.seq_num, 0, conn_id, 0b001)  # ACK packet
+                self.send_packet(self.seq_num, 0, conn_id, 0b001, client_address=client_address)  # ACK packet
 
     def run(self):
         try:

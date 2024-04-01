@@ -28,8 +28,7 @@ class Socket:
         self.timeout = 10
 
         self.base = 12345
-        self.seqNum = self.base
-
+        self.seqNum = INITIAL_SEQ_NUM
         self.inSeq = inSeq
 
         self.lastAckTime = time.time()
