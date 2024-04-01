@@ -27,7 +27,7 @@ class Socket:
         self.sock.settimeout(0.5)
         self.timeout = 10
 
-        self.base = 12345
+        self.base = 50000
         self.seqNum = self.base
 
         self.inSeq = inSeq
@@ -45,8 +45,8 @@ class Socket:
         self.remote = None
         self.noClose = noClose
 
-        self.cwnd = 1
-        self.ssthresh = 64
+        self.cwnd = 412  # Initial congestion window size
+        self.ssthresh = 12000  # Initial slow-start threshold
         self.dupAckThreshold = 3
 
     def __enter__(self):
