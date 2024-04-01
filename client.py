@@ -2,6 +2,7 @@ import argparse
 import os
 import socket
 import sys
+import time
 
 import confundo
 
@@ -17,6 +18,10 @@ def start():
             sock.settimeout(10)
             sock.connect((args.host, int(args.port)))
 
+            # Perform 3-way handshake
+            sock.sendSynPacket()  # Send SYN packet
+            sock.expectSynAck()  # Expect SYN-ACK response
+
             with open(args.file, "rb") as f:
                 data = f.read(50000)
                 while data:
@@ -24,8 +29,11 @@ def start():
                     while total_sent < len(data):
                         sent = sock.send(data[total_sent:])
                         total_sent += sent
-                        data = f.read(50000)
-    except RuntimeError as e:
+                    data = f.read(50000)
+
+            # Gracefully terminate the connection
+            sock.close()
+    except (RuntimeError, socket.timeout, socket.error) as e:
         sys.stderr.write(f"ERROR: {e}\n")
         sys.exit(1)
 
