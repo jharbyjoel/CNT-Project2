@@ -28,6 +28,7 @@ def start():
             sock.expectSynAck()  # Expect SYN-ACK response
 
             total_sent = 0
+            seqNum = sock.seqNum  # Initialize sequence number
             while True:
                 data = b''
                 for _ in range(MAX_CHUNKS):
@@ -39,8 +40,10 @@ def start():
                 if not data:
                     break  # End of file reached
 
-                sent = sock.send(data)
+                # Send data with the current sequence number
+                sent = sock.send(data, seqNum)
                 total_sent += sent
+                seqNum += sent  # Update sequence number for next segment
 
                 # Update congestion window size
                 if CWND < SS_THRESH:
