@@ -18,20 +18,24 @@ class State(Enum):
     CLOSED = 20
     ERROR = 21
 
+# class TimeoutError:
+#     pass
+
 class Socket:
     '''Incomplete socket abstraction for Confundo protocol'''
 
-    def __init__(self, connId=0, inSeq=None, synReceived=False, sock=None, noClose=False):
-        self.sock = sock or socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    def __init__(self, connId=0, inSeq=None, synReceived=False, sock=socket.socket(socket.AF_INET, socket.SOCK_DGRAM), noClose=False):
+        self.sock = sock
         self.connId = connId
         self.sock.settimeout(0.5)
         self.timeout = 10
 
         self.base = 12345
-        self.seqNum = INITIAL_SEQ_NUM
+        self.seqNum = self.base
+
         self.inSeq = inSeq
 
-        self.lastAckTime = time.time()
+        self.lastAckTime = time.time() # last time ACK was sent / activity timer
         self.cc = CwndControl()
         self.outBuffer = b""
         self.inBuffer = b""
@@ -43,6 +47,20 @@ class Socket:
 
         self.remote = None
         self.noClose = noClose
+
+        self.cwnd = 1  # Initial congestion window size
+        self.ssthresh = 64  # Initial slow start threshold
+        self.dupAckThreshold = 3  # Threshold for triggering fast retransmit on duplicate ACKs
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exception_type, exception_value, traceback):
+        if self.state == State.OPEN:
+            self.close()
+        if self.noClose:
+            return
+        self.sock.close()
 
     def connect(self, endpoint):
         remote = socket.getaddrinfo(endpoint[0], endpoint[1], family=socket.AF_INET, type=socket.SOCK_DGRAM)
@@ -60,19 +78,27 @@ class Socket:
         self.sock.bind(sockaddr)
         self.state = State.LISTEN
 
+    def listen(self, queue):
+        if self.state != State.LISTEN:
+            raise RuntimeError("Cannot listen")
+        pass
+
     def accept(self):
         if self.state != State.LISTEN:
             raise RuntimeError("Cannot accept")
 
         hadNewConnId = True
         while True:
+            # just wait forever until a new connection arrives
+
             if hadNewConnId:
-                self.connId += 1
+                self.connId += 1 # use it for counting incoming connections, no other uses really
                 hadNewConnId = False
             pkt = self._recv()
             if pkt and pkt.isSyn:
                 hadNewConnId = True
-                clientSock = Socket(connId=self.connId, synReceived=True, sock=self.sock, inSeq=pkt.seqNum, noClose=True)
+                clientSock = Socket(connId=self.connId, synReceived=True, sock=self.sock, inSeq=None, noClose=True)
+                # at this point, syn was received, ack for syn was sent, now need to send our SYN and wait for ACK
                 clientSock._connect(self.lastFromAddr)
                 return clientSock
 
@@ -80,31 +106,40 @@ class Socket:
         self.timeout = timeout
 
     def _send(self, packet):
+        '''"Private" method to send packet out'''
+
         if self.remote:
             self.sock.sendto(packet.encode(), self.remote)
         else:
             self.sock.sendto(packet.encode(), self.lastFromAddr)
+        print(format_line("SEND", packet, -1, -1))
 
     def _recv(self):
+        '''"Private" method to receive incoming packets'''
+
         try:
             (inPacket, self.lastFromAddr) = self.sock.recvfrom(1024)
         except socket.error as e:
             return None
 
         inPkt = Packet().decode(inPacket)
+        print(format_line("RECV", inPkt, -1, -1))
 
         outPkt = None
         if inPkt.isSyn:
             if inPkt.connId != 0:
                 self.connId = inPkt.connId
             self.synReceived = True
+
             outPkt = Packet(seqNum=self.seqNum, ackNum=self.inSeq, connId=self.connId, isAck=True)
 
         elif inPkt.isFin:
-            if self.inSeq == inPkt.seqNum:
+            if self.inSeq == inPkt.seqNum: # all previous packets has been received, so safe to advance
                 self.finReceived = True
             else:
+                # don't advance, which means we will send a duplicate ACK
                 pass
+
             outPkt = Packet(seqNum=self.seqNum, ackNum=self.inSeq, connId=self.connId, isAck=True)
 
         elif len(inPkt.payload) > 0:
@@ -114,10 +149,12 @@ class Socket:
             if self.finReceived:
                 raise RuntimeError("Received data after getting FIN (incoming connection closed)")
 
-            if self.inSeq == inPkt.seqNum:
+            if self.inSeq == inPkt.seqNum: # all previous packets has been received, so safe to advance
                 self.inBuffer += inPkt.payload
             else:
+                # don't advance, which means we will send a duplicate ACK
                 pass
+
             outPkt = Packet(seqNum=self.seqNum, ackNum=self.inSeq, connId=self.connId, isAck=True)
 
         if outPkt:
@@ -148,6 +185,7 @@ class Socket:
     def sendSynPacket(self):
         synPkt = Packet(seqNum=self.seqNum, connId=self.connId, isSyn=True)
         self._send(synPkt)
+        self.seqNum +=1
 
     def expectSynAck(self):
         startTime = time.time()
@@ -194,6 +232,15 @@ class Socket:
             return response
 
     def send(self, data):
+        '''
+        This is one of the methods that require fixes.  Besides the marked place where you need
+        to figure out proper updates (to make basic transfer work), this method is the place
+        where you should initiate congestion control operations.   You can either directly update cwnd, ssthresh,
+        and anything else you need or use CwndControl class, up to you.  There isn't any skeleton code for the
+        congestion control operations.  You would need to update things here and in `format_msg` calls
+        in this file to properly print values.
+        '''
+
         if self.state != State.OPEN:
             raise RuntimeError("Trying to send FIN, but socket is not in OPEN state")
 
@@ -205,19 +252,33 @@ class Socket:
             pkt = Packet(seqNum=self.base, connId=self.connId, payload=toSend)
             self._send(pkt)
 
-            pkt = self._recv()
+            pkt = self._recv()  # if within RTO we didn't receive packets, things will be retransmitted
             if pkt and pkt.isAck:
-                advanceAmount = pkt.ackNum - self.base
-                if advanceAmount == 0:
-                    self.nDupAcks += 1
+                # Congestion control logic
+                if self.cwnd < self.ssthresh:
+                    self.cwnd *= 2  # Slow start
                 else:
-                    self.nDupAcks = 0
+                    self.cwnd += 1  # Congestion avoidance
+
+                advanceAmount = len(toSend)
+                self.nDupAcks = 0
 
                 self.outBuffer = self.outBuffer[advanceAmount:]
-                self.base = pkt.ackNum
+                self.base = self.seqNum  # Update base for the next sequence number
+
+            elif pkt and pkt.isDupAck:
+                self.nDupAcks += 1
+                if self.nDupAcks == self.dupAckThreshold:
+                    # Fast retransmit
+                    self.ssthresh = max(self.cwnd / 2, 2)
+                    self.cwnd = self.ssthresh + 3
+                    advanceAmount = len(toSend) * 3  # Fast retransmit, so advance by 3 segments
+                    self.nDupAcks = 0
+                    self.outBuffer = self.outBuffer[advanceAmount:]
+                    self.base = self.seqNum  # Update base for the next sequence number
 
             if time.time() - startTime > GLOBAL_TIMEOUT:
                 self.state = State.ERROR
-                raise RuntimeError("timeout")
+                raise RuntimeError("Timeout")
 
         return len(data)
